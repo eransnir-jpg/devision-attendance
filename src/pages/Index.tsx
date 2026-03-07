@@ -1,13 +1,15 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { format } from "date-fns";
 import { he } from "date-fns/locale";
-import { FileDown, Users } from "lucide-react";
+import { FileDown, Users, Save, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import AttendancePieChart from "@/components/AttendancePieChart";
 import SummaryCards from "@/components/SummaryCards";
 import EmployeeTable from "@/components/EmployeeTable";
-import { getInitialEmployees, STATUS_COLORS, CHAR_COLORS, Employee } from "@/data/employees";
+import { getInitialEmployees, STATUS_COLORS, CHAR_COLORS, DEFAULT_STATUS, Employee } from "@/data/employees";
 import { exportToExcel } from "@/lib/exportExcel";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 
 function countBy(employees: Employee[], key: keyof Employee, colorMap: Record<string, string>) {
   const counts: Record<string, number> = {};
@@ -27,9 +29,38 @@ type FilterType = { kind: "status"; value: string } | { kind: "char"; value: str
 export default function Index() {
   const [employees, setEmployees] = useState<Employee[]>(getInitialEmployees);
   const [activeFilter, setActiveFilter] = useState<FilterType>(null);
+  const [hasChanges, setHasChanges] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const today = format(new Date(), "EEEE, d בMMMM yyyy", { locale: he });
   const todayFile = format(new Date(), "yyyy-MM-dd");
+  const todayDate = format(new Date(), "yyyy-MM-dd");
+
+  // Load saved attendance from DB on mount
+  useEffect(() => {
+    async function loadAttendance() {
+      const { data, error } = await supabase
+        .from("attendance_records")
+        .select("employee_id, status")
+        .eq("attendance_date", todayDate);
+
+      if (error) {
+        console.error("Error loading attendance:", error);
+        return;
+      }
+
+      if (data && data.length > 0) {
+        const statusMap = new Map(data.map((r) => [r.employee_id, r.status]));
+        setEmployees((prev) =>
+          prev.map((e) => ({
+            ...e,
+            attendanceStatus: statusMap.get(e.id) || e.attendanceStatus,
+          }))
+        );
+      }
+    }
+    loadAttendance();
+  }, [todayDate]);
 
   const statusData = useMemo(() => countBy(employees, "attendanceStatus", STATUS_COLORS), [employees]);
   const charData = useMemo(() => countBy(employees, "characteristic", CHAR_COLORS), [employees]);
@@ -43,6 +74,41 @@ export default function Index() {
     setEmployees((prev) =>
       prev.map((e) => (e.id === id ? { ...e, attendanceStatus: status } : e))
     );
+    setHasChanges(true);
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const records = employees.map((e) => ({
+        employee_id: e.id,
+        attendance_date: todayDate,
+        status: e.attendanceStatus,
+        updated_at: new Date().toISOString(),
+      }));
+
+      const { error } = await supabase
+        .from("attendance_records")
+        .upsert(records, { onConflict: "employee_id,attendance_date" });
+
+      if (error) throw error;
+
+      setHasChanges(false);
+      toast.success("הנתונים נשמרו בהצלחה!");
+    } catch (err) {
+      console.error("Save error:", err);
+      toast.error("שגיאה בשמירה, נסה שוב");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleReset = async () => {
+    setEmployees((prev) =>
+      prev.map((e) => ({ ...e, attendanceStatus: DEFAULT_STATUS }))
+    );
+    setHasChanges(true);
+    toast.info("הנתונים אופסו לברירת מחדל. לחץ 'שמור' לעדכון.");
   };
 
   const toggleFilter = useCallback((kind: FilterType["kind"], value: string) => {
@@ -60,7 +126,7 @@ export default function Index() {
         return employees.filter((e) => e.characteristic === activeFilter.value);
       case "card":
         if (activeFilter.value === "present") return employees.filter((e) => e.attendanceStatus === "מגיע לעבודה");
-        return employees; // "total" shows all
+        return employees;
       default:
         return employees;
     }
@@ -83,7 +149,23 @@ export default function Index() {
             <span className="text-sm text-muted-foreground bg-muted px-3 py-1 rounded-full">
               {employees.length} עובדים
             </span>
-            <Button onClick={() => exportToExcel(employees, todayFile)} className="gap-2">
+            <Button
+              variant="outline"
+              onClick={handleReset}
+              className="gap-2"
+            >
+              <RotateCcw className="w-4 h-4" />
+              איפוס
+            </Button>
+            <Button
+              onClick={handleSave}
+              disabled={!hasChanges || saving}
+              className="gap-2"
+            >
+              <Save className="w-4 h-4" />
+              {saving ? "שומר..." : "שמור"}
+            </Button>
+            <Button variant="outline" onClick={() => exportToExcel(employees, todayFile)} className="gap-2">
               <FileDown className="w-4 h-4" />
               ייצוא לאקסל
             </Button>
