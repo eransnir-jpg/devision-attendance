@@ -9,25 +9,27 @@ interface PieData {
 interface Props {
   title: string;
   data: PieData[];
+  activeSlice?: string | null;
+  onSliceClick?: (name: string) => void;
 }
 
 const RADIAN = Math.PI / 180;
 
 const renderCustomLabel = ({
-  cx, cy, midAngle, innerRadius, outerRadius, percent,
+  cx, cy, midAngle, innerRadius, outerRadius, value,
 }: any) => {
-  if (percent < 0.03) return null;
+  if (value === 0) return null;
   const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
   const x = cx + radius * Math.cos(-midAngle * RADIAN);
   const y = cy + radius * Math.sin(-midAngle * RADIAN);
   return (
     <text x={x} y={y} fill="white" textAnchor="middle" dominantBaseline="central" fontSize={13} fontWeight={600}>
-      {`${(percent * 100).toFixed(0)}%`}
+      {value}
     </text>
   );
 };
 
-export default function AttendancePieChart({ title, data }: Props) {
+export default function AttendancePieChart({ title, data, activeSlice, onSliceClick }: Props) {
   const filtered = data.filter((d) => d.value > 0);
 
   return (
@@ -44,9 +46,15 @@ export default function AttendancePieChart({ title, data }: Props) {
             outerRadius={120}
             dataKey="value"
             stroke="none"
+            onClick={(_, index) => onSliceClick?.(filtered[index].name)}
+            cursor="pointer"
           >
             {filtered.map((entry, index) => (
-              <Cell key={index} fill={entry.color} />
+              <Cell
+                key={index}
+                fill={entry.color}
+                opacity={activeSlice && activeSlice !== entry.name ? 0.3 : 1}
+              />
             ))}
           </Pie>
           <Tooltip

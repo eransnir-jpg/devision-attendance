@@ -1,9 +1,10 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { format } from "date-fns";
 import { he } from "date-fns/locale";
 import { FileDown, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import AttendancePieChart from "@/components/AttendancePieChart";
+import SummaryCards from "@/components/SummaryCards";
 import EmployeeTable from "@/components/EmployeeTable";
 import { getInitialEmployees, STATUS_COLORS, CHAR_COLORS, Employee } from "@/data/employees";
 import { exportToExcel } from "@/lib/exportExcel";
@@ -21,8 +22,11 @@ function countBy(employees: Employee[], key: keyof Employee, colorMap: Record<st
   }));
 }
 
+type FilterType = { kind: "status"; value: string } | { kind: "char"; value: string } | { kind: "card"; value: string } | null;
+
 export default function Index() {
   const [employees, setEmployees] = useState<Employee[]>(getInitialEmployees);
+  const [activeFilter, setActiveFilter] = useState<FilterType>(null);
 
   const today = format(new Date(), "EEEE, d בMMMM yyyy", { locale: he });
   const todayFile = format(new Date(), "yyyy-MM-dd");
@@ -30,15 +34,40 @@ export default function Index() {
   const statusData = useMemo(() => countBy(employees, "attendanceStatus", STATUS_COLORS), [employees]);
   const charData = useMemo(() => countBy(employees, "characteristic", CHAR_COLORS), [employees]);
 
+  const presentCount = useMemo(
+    () => employees.filter((e) => e.attendanceStatus === "מגיע לעבודה").length,
+    [employees]
+  );
+
   const handleStatusChange = (id: number, status: string) => {
     setEmployees((prev) =>
       prev.map((e) => (e.id === id ? { ...e, attendanceStatus: status } : e))
     );
   };
 
+  const toggleFilter = useCallback((kind: FilterType["kind"], value: string) => {
+    setActiveFilter((prev) =>
+      prev && prev.kind === kind && prev.value === value ? null : { kind, value } as FilterType
+    );
+  }, []);
+
+  const filteredEmployees = useMemo(() => {
+    if (!activeFilter) return employees;
+    switch (activeFilter.kind) {
+      case "status":
+        return employees.filter((e) => e.attendanceStatus === activeFilter.value);
+      case "char":
+        return employees.filter((e) => e.characteristic === activeFilter.value);
+      case "card":
+        if (activeFilter.value === "present") return employees.filter((e) => e.attendanceStatus === "מגיע לעבודה");
+        return employees; // "total" shows all
+      default:
+        return employees;
+    }
+  }, [employees, activeFilter]);
+
   return (
     <div className="min-h-screen bg-background font-heebo" dir="rtl">
-      {/* Header */}
       <header className="bg-card border-b border-border sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -54,10 +83,7 @@ export default function Index() {
             <span className="text-sm text-muted-foreground bg-muted px-3 py-1 rounded-full">
               {employees.length} עובדים
             </span>
-            <Button
-              onClick={() => exportToExcel(employees, todayFile)}
-              className="gap-2"
-            >
+            <Button onClick={() => exportToExcel(employees, todayFile)} className="gap-2">
               <FileDown className="w-4 h-4" />
               ייצוא לאקסל
             </Button>
@@ -66,14 +92,39 @@ export default function Index() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
-        {/* Pie Charts */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <AttendancePieChart title="סטטוס נוכחות" data={statusData} />
-          <AttendancePieChart title="מאפיין עובד" data={charData} />
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-6">
+          <AttendancePieChart
+            title="סטטוס נוכחות"
+            data={statusData}
+            activeSlice={activeFilter?.kind === "status" ? activeFilter.value : null}
+            onSliceClick={(name) => toggleFilter("status", name)}
+          />
+          <AttendancePieChart
+            title="מאפיין עובד"
+            data={charData}
+            activeSlice={activeFilter?.kind === "char" ? activeFilter.value : null}
+            onSliceClick={(name) => toggleFilter("char", name)}
+          />
+          <SummaryCards
+            total={employees.length}
+            present={presentCount}
+            activeCard={activeFilter?.kind === "card" ? activeFilter.value : null}
+            onCardClick={(card) => toggleFilter("card", card)}
+          />
         </div>
 
-        {/* Employee Table */}
-        <EmployeeTable employees={employees} onStatusChange={handleStatusChange} />
+        {activeFilter && (
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">
+              מסנן: {activeFilter.kind === "card" ? (activeFilter.value === "present" ? "נוכחים" : "כל העובדים") : activeFilter.value}
+            </span>
+            <Button variant="ghost" size="sm" onClick={() => setActiveFilter(null)}>
+              ✕ נקה סינון
+            </Button>
+          </div>
+        )}
+
+        <EmployeeTable employees={filteredEmployees} onStatusChange={handleStatusChange} />
       </main>
     </div>
   );
